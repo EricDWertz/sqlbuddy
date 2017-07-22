@@ -1,10 +1,8 @@
 sqlbuddy
 ========
-visual query thing
-------------------
+# visual query thing
 
-###Todo List:
-
- - Stuff
-    - Things
-    - More stuff
+### Todo List:
+ - Don't show tabs if there's only one result
+ - Don't rely on BUFFER_SIZE to determine max string size
+ - Only ever have one window
