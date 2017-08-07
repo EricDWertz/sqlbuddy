@@ -9,6 +9,7 @@
 #include <gtk/gtk.h>
 
 #define BUFFER_SIZE 65536
+#define FIFO_LOCATION "/tmp/sqlbuddy"
 
 #define MSG_NORMAL 0
 #define MSG_ERROR 1
@@ -32,6 +33,19 @@ int query_count = 1;
 GtkTextTag* text_normal;
 GtkTextTag* text_success;
 GtkTextTag* text_error;
+
+int fifofd;
+int readfifo = TRUE;
+
+void quit_app( gpointer user )
+{
+    readfifo = FALSE; //Kill the thread
+
+    //Unlink the fifo
+    unlink( FIFO_LOCATION );
+
+    gtk_main_quit();
+}
 
 gboolean log_text_append( gpointer data )
 {
@@ -181,7 +195,8 @@ void create_query_result_tab( MYSQL_RES* result )
 gboolean window_key_press(GtkWidget* widget,GdkEvent* event,gpointer user)
 {
 	GdkEventKey* keyevent=&event->key;
-	if(keyevent->keyval==GDK_KEY_Escape) gtk_main_quit();
+	if(keyevent->keyval==GDK_KEY_Escape) 
+        quit_app( NULL );
 }
 
 //Init the various tags for formatting text in the log container
@@ -226,8 +241,8 @@ void create_query_window()
     gtk_container_add( GTK_CONTAINER( result_window ), GTK_WIDGET( pane ) );
 
     //Hook into events
-    g_signal_connect(G_OBJECT(result_window), "key-press-event", G_CALLBACK(window_key_press), NULL);
-    g_signal_connect(G_OBJECT(result_window), "delete-event", gtk_main_quit, NULL);
+    g_signal_connect(G_OBJECT(result_window), "key-press-event", G_CALLBACK( window_key_press ), NULL);
+    g_signal_connect(G_OBJECT(result_window), "delete-event", G_CALLBACK( quit_app ), NULL);
             
     gtk_widget_show_all(result_window);
 
@@ -318,21 +333,79 @@ gpointer execute_input( gpointer data )
     return NULL;
 }
 
+gpointer fifo_reader( gpointer data )
+{
+    char buffer[BUFFER_SIZE];
+    int buffer_len;
+    fifofd = open( FIFO_LOCATION, O_RDONLY );
+
+    while( readfifo )
+    {
+        buffer_len = read(fifofd, buffer, BUFFER_SIZE);
+        if( buffer_len > 0 )
+        {
+            printf( "Read from fifo: %s\n", buffer );
+            g_thread_new( "sqlstuff", execute_input, (gpointer)buffer );
+        }
+    }
+
+    close( fifofd );
+}
+
+//Returns true if app should exit
+gboolean check_for_fifo( const char* buffer, int buffer_len )
+{
+    if( access( FIFO_LOCATION, W_OK ) != -1 )
+    {
+        //Fifo exists, we should write our buffer to it...
+        fifofd = open( FIFO_LOCATION, O_WRONLY | O_NONBLOCK );
+        if( fifofd == -1 )
+        {
+            printf( "Error opening the fifo... no one is listening?\n" );
+            return FALSE;
+        }
+        
+        if( write( fifofd, buffer, buffer_len ) == -1 )
+        {
+            printf( "FIFO write failed\n" );
+            return FALSE;
+        }
+        else
+        {
+            close( fifofd );
+            return TRUE;
+        }
+    }
+
+    return FALSE;
+}
+
 int main( int argc, char* argv[] )
 {
+    char buffer[BUFFER_SIZE];
+    int buffer_len;
+    //Read stdin
+    buffer_len = read(STDIN_FILENO, buffer, BUFFER_SIZE);
+
+    //TODO: Check for fifo!
+    if( check_for_fifo( buffer, buffer_len ) )
+    {
+        exit( 0 );
+    }
+
     //Fork into background
     if( fork() != 0 )
         exit( 0 );
 
     gtk_init( &argc, &argv );
 
-    char buffer[BUFFER_SIZE];
-    //Read stdin
-    read(STDIN_FILENO, buffer, BUFFER_SIZE);
-
     create_query_window();
 
     g_thread_new( "sqlstuff", execute_input, (gpointer)buffer );
+
+    //Create thread to listen to fifo
+    mkfifo( FIFO_LOCATION, 0666 );
+    g_thread_new( "fiforeader", fifo_reader, NULL );
 
     gtk_main();
 }
