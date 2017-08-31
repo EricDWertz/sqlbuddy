@@ -333,6 +333,12 @@ gpointer execute_input( gpointer data )
     return NULL;
 }
 
+gboolean bring_window_to_front( gpointer user )
+{
+    gtk_window_present( GTK_WINDOW( result_window ) );
+    return FALSE;
+}
+
 gpointer fifo_reader( gpointer data )
 {
     char buffer[BUFFER_SIZE];
@@ -344,7 +350,8 @@ gpointer fifo_reader( gpointer data )
         buffer_len = read(fifofd, buffer, BUFFER_SIZE);
         if( buffer_len > 0 )
         {
-            printf( "Read from fifo: %s\n", buffer );
+            //Bring the window to the front and execute the buffer
+            gdk_threads_add_idle( bring_window_to_front, NULL ); 
             g_thread_new( "sqlstuff", execute_input, (gpointer)buffer );
         }
     }
